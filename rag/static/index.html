@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ассистент по документам</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3efe6;
+      --ink: #1d1a16;
+      --muted: #5e574c;
+      --card: #fffdf8;
+      --line: #e3dacb;
+      --accent: #0f6e56;
+      --accent-ink: #f4fff9;
+      --warn: #8a3b12;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+    h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 8px; }
+    p.lead { margin: 0 0 24px; color: var(--muted); font-size: 1.05rem; }
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    label { display: block; font-size: 0.92rem; margin-bottom: 6px; }
+    input[type="text"], textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      background: #fff;
+      color: inherit;
+    }
+    textarea { min-height: 96px; resize: vertical; }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+    button {
+      border: 0;
+      background: var(--accent);
+      color: var(--accent-ink);
+      border-radius: 999px;
+      padding: 10px 16px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    .status { color: var(--muted); font-size: 0.92rem; }
+    .answer { white-space: pre-wrap; line-height: 1.45; }
+    .meta { color: var(--muted); font-size: 0.9rem; margin-top: 8px; }
+    .source {
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+      margin-top: 10px;
+    }
+    .source strong { font-weight: 600; }
+    .missing { color: var(--warn); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ассистент по документам</h1>
+    <p class="lead">Отвечает только по загруженным файлам и показывает, из какого фрагмента взята цитата. Без API-ключа формулировка собирается из найденных кусков.</p>
+
+    <section>
+      <label for="path">Папка или файл на сервере</label>
+      <input id="path" type="text" value="examples/docs" />
+      <div class="row">
+        <button id="ingest" type="button">Проиндексировать</button>
+        <label class="status">или загрузить файлы
+          <input id="files" type="file" accept=".md,.txt,.pdf,text/plain" multiple />
+        </label>
+        <span id="ingest-status" class="status"></span>
+      </div>
+    </section>
+
+    <section>
+      <label for="question">Вопрос</label>
+      <textarea id="question" placeholder="Например: сколько дней отпуска положено и за сколько дней писать заявление?"></textarea>
+      <div class="row">
+        <button id="ask" type="button">Спросить</button>
+        <span id="ask-status" class="status"></span>
+      </div>
+    </section>
+
+    <section id="result" hidden>
+      <div id="answer" class="answer"></div>
+      <div id="mode" class="meta"></div>
+      <div id="sources"></div>
+    </section>
+  </main>
+  <script>
+    const answerEl = document.getElementById("answer");
+    const modeEl = document.getElementById("mode");
+    const sourcesEl = document.getElementById("sources");
+    const resultEl = document.getElementById("result");
+
+    async function readError(response) {
+      try {
+        const data = await response.json();
+        return data.detail || JSON.stringify(data);
+      } catch (err) {
+        return response.statusText;
+      }
+    }
+
+    function showAnswer(data) {
+      resultEl.hidden = false;
+      answerEl.textContent = data.answer || "";
+      answerEl.className = data.found ? "answer" : "answer missing";
+      modeEl.textContent = data.mode ? "Режим: " + data.mode : "";
+      sourcesEl.textContent = "";
+      (data.sources || []).forEach((source) => {
+        const block = document.createElement("div");
+        block.className = "source";
+        const title = document.createElement("strong");
+        title.textContent = source.citation + " · схожесть " + Number(source.score).toFixed(2);
+        const text = document.createElement("div");
+        text.textContent = source.text;
+        block.appendChild(title);
+        block.appendChild(text);
+        sourcesEl.appendChild(block);
+      });
+    }
+
+    document.getElementById("ingest").addEventListener("click", async () => {
+      const status = document.getElementById("ingest-status");
+      const button = document.getElementById("ingest");
+      button.disabled = true;
+      status.textContent = "Индексирую…";
+      try {
+        const response = await fetch("/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: document.getElementById("path").value })
+        });
+        if (!response.ok) throw new Error(await readError(response));
+        const data = await response.json();
+        status.textContent = "Файлов: " + data.files + ", фрагментов: " + data.chunks;
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.getElementById("files").addEventListener("change", async (event) => {
+      const status = document.getElementById("ingest-status");
+      const selected = event.target.files;
+      if (!selected || !selected.length) return;
+      const body = new FormData();
+      for (const file of selected) body.append("files", file);
+      status.textContent = "Загружаю…";
+      try {
+        const response = await fetch("/ingest/upload", { method: "POST", body });
+        if (!response.ok) throw new Error(await readError(response));
+        const data = await response.json();
+        status.textContent = "Загружено файлов: " + data.files + ", фрагментов: " + data.chunks;
+      } catch (err) {
+        status.textContent = err.message;
+      }
+    });
+
+    document.getElementById("ask").addEventListener("click", async () => {
+      const status = document.getElementById("ask-status");
+      const button = document.getElementById("ask");
+      button.disabled = true;
+      status.textContent = "Ищу…";
+      try {
+        const response = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: document.getElementById("question").value })
+        });
+        if (!response.ok) throw new Error(await readError(response));
+        showAnswer(await response.json());
+        status.textContent = "";
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
